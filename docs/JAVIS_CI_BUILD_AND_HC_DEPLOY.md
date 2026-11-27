@@ -1,6 +1,6 @@
 # Hướng dẫn Build bằng GitHub Actions và Cập nhật lên JAVIS HC
 
-Tài liệu này hướng dẫn quy trình build tự động bằng GitHub Actions từ repository `https://github.com/dinhchinh82/go2rtc` và cách tải artifact về kiểm thử song song / cập nhật lên một bộ JAVIS Home Controller (HC) cụ thể.
+Tài liệu này hướng dẫn quy trình build **thủ công khi cần** bằng GitHub Actions từ repository `https://github.com/dinhchinh82/go2rtc` và cách tải artifact về kiểm thử song song / cập nhật lên một bộ JAVIS Home Controller (HC) cụ thể.
 
 > [!IMPORTANT]
 > Mọi bản build mới cần được **chạy song song trên port tách biệt (`1985` / `8557` / `8558`)** và kiểm thử thực tế với camera HANET tại hiện trường trước khi thay thế binary đang chạy trên HC. Không restart Home Assistant hay chỉnh logic AI mở cửa khi đang thử nghiệm.
@@ -9,7 +9,7 @@ Tài liệu này hướng dẫn quy trình build tự động bằng GitHub Acti
 
 ## 1. Workflow GitHub Actions hiện có
 
-Repository sử dụng workflow riêng [javis-hanet-build.yml](file:///Volumes/Project/01_Projects/06_VibeCoding/25_go2rtc_patch/go2rtc/.github/workflows/javis-hanet-build.yml) (hoặc `.github/workflows/javis-hanet-build.yml` trên GitHub) với 2 job tuần tự:
+Repository sử dụng workflow riêng [javis-hanet-build.yml](file:///Volumes/Project/01_Projects/06_VibeCoding/25_go2rtc_patch/go2rtc/.github/workflows/javis-hanet-build.yml) (hoặc `.github/workflows/javis-hanet-build.yml` trên GitHub) chạy **thủ công hoàn toàn (`workflow_dispatch`, không tự chạy khi push/merge)** với 2 job tuần tự:
 
 1. **Job `test` (`Test HANET Compatibility`)** trên `ubuntu-latest`:
    - Cài `ffmpeg` để chạy strict decoder test (`-xerror -err_detect explode`).
@@ -19,39 +19,37 @@ Repository sử dụng workflow riêng [javis-hanet-build.yml](file:///Volumes/P
    - Chạy E2E RTSP/MP4/WebRTC tests: `go test -v ./internal/rtsp/... -timeout 180s`.
    - Chạy toàn bộ unit tests repo: `go test ./... -timeout 120s`.
    - Upload artifact kết quả test `javis-hanet-test-results` (`hanet-race-results.txt`, `hanet-e2e-results.txt`, `repo-test-results.txt`).
-2. **Job `build` (`Build Linux AMD64 and ARM64`, `needs: test`)**:
+2. **Job `build` (`Build Linux ARM64 (optional AMD64)`, `needs: test`)**:
    - Chỉ chạy khi job `test` pass 100%.
    - Build trực tiếp từ commit hiện tại trong repo (không clone upstream sạch):
-     - `dist/go2rtc_linux_amd64` (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64`)
-     - `dist/go2rtc_linux_arm64` (`CGO_ENABLED=0 GOOS=linux GOARCH=arm64` — dành cho JAVIS HC)
-   - Tạo `dist/SHA256SUMS.txt` và `dist/build-info.txt` (ghi `commit`, `ref`, `go_version`, `app_version`, `test_gate=PASSED`).
+     - Mặc định chỉ build `dist/go2rtc_linux_arm64` (`CGO_ENABLED=0 GOOS=linux GOARCH=arm64` — dành cho JAVIS HC).
+     - Tùy chọn tick `build_amd64` (mặc định `false`) nếu cần build thêm `dist/go2rtc_linux_amd64`.
+   - Tạo `dist/SHA256SUMS.txt` và `dist/build-info.txt` (ghi `commit`, `ref`, `targets`, `go_version`, `app_version`, `test_gate=PASSED`).
    - Upload artifact `go2rtc-javis-hanet-linux`.
 
 ---
 
-## 2. Cách kích hoạt Build trên GitHub Actions
+## 2. Cách kích hoạt Build thủ công trên GitHub Actions
 
 > [!NOTE]
 > **Vì sao đôi khi không thấy nút `Run workflow` trên GitHub?**
 > GitHub Actions chỉ hiển thị nút **Run workflow** (`workflow_dispatch`) khi file `.github/workflows/javis-hanet-build.yml` đã có mặt trên **nhánh mặc định (default branch, hiện là `master`)**. Nếu workflow mới chỉ nằm trên nhánh `dev`:
-> 1. Để chạy lại trực tiếp trên nhánh `dev`: mở lần chạy hiện có trong tab **Actions** -> nhấn **Re-run all jobs** (hoặc **Re-run failed jobs**), hoặc push commit mới lên `dev`.
-> 2. Để hiện nút **Run workflow** trên giao diện Web: merge/cherry-pick `.github/workflows/javis-hanet-build.yml` vào `master` (hoặc tạm đổi default branch của repo sang `dev` trong **Settings -> Branches**).
+> 1. Để hiện nút **Run workflow** trên giao diện Web: merge/cherry-pick `.github/workflows/javis-hanet-build.yml` vào `master` (hoặc đổi default branch của repo sang `dev` trong **Settings -> Branches**).
+> 2. Hoặc kích hoạt từ máy local qua GitHub CLI (`gh workflow run javis-hanet-build.yml --ref dev`).
 
-### Cách A: Tự động khi push / PR
-Workflow tự động chạy khi:
-- `push` lên nhánh `dev`, `feature/javis-hanet-rtsp-fix` hoặc `master`.
-- Tạo/cập nhật `pull_request`.
-
-### Cách B: Chạy thủ công trên giao diện Web GitHub
+### Cách A: Chạy thủ công trên giao diện Web GitHub
 1. Mở repo `https://github.com/dinhchinh82/go2rtc` trên trình duyệt.
 2. Vào tab **Actions** -> chọn workflow **JAVIS HANET Build and Test** ở cột trái.
-3. Nhấn **Run workflow** -> chọn branch `dev` (hoặc branch cần build) -> nhấn **Run workflow**.
-4. Chờ cả 2 job **Test HANET Compatibility** và **Build Linux AMD64 and ARM64** chuyển xanh (`Success`).
+3. Nhấn **Run workflow** -> chọn branch `dev` (hoặc branch cần build); giữ nguyên `build_amd64` tắt nếu chỉ cần `linux/arm64` cho HC -> nhấn **Run workflow**.
+4. Chờ cả 2 job **Test HANET Compatibility** và **Build Linux ARM64 (optional AMD64)** chuyển xanh (`Success`).
 
-### Cách C: Chạy và theo dõi qua GitHub CLI (`gh`)
+### Cách B: Chạy và theo dõi qua GitHub CLI (`gh`)
 ```bash
-# Kích hoạt build thủ công trên nhánh dev
+# Kích hoạt build thủ công mặc định (chỉ ARM64) trên nhánh dev
 gh workflow run javis-hanet-build.yml --ref dev
+
+# Hoặc build cả ARM64 + AMD64 khi cần test trên x86_64:
+# gh workflow run javis-hanet-build.yml --ref dev -f build_amd64=true
 
 # Xem danh sách các lần chạy gần nhất
 gh run list --workflow javis-hanet-build.yml --branch dev --limit 5

@@ -2,12 +2,12 @@ name: JAVIS HANET Build and Test
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'dev'
-      - 'feature/javis-hanet-rtsp-fix'
-      - 'master'
-  pull_request:
+    inputs:
+      build_amd64:
+        description: 'Also build Linux AMD64 binary (default: ARM64 only)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -68,7 +68,7 @@ jobs:
             repo-test-results.txt
 
   build:
-    name: Build Linux AMD64 and ARM64
+    name: Build Linux ARM64 (optional AMD64)
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -84,21 +84,31 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build Linux AMD64 and ARM64 binaries
+      - name: Build Linux ARM64 binary
         run: |
           mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -trimpath -o dist/go2rtc_linux_amd64 .
           GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -trimpath -o dist/go2rtc_linux_arm64 .
-          chmod +x dist/go2rtc_linux_amd64 dist/go2rtc_linux_arm64
+          chmod +x dist/go2rtc_linux_arm64
+
+      - name: Build Linux AMD64 binary (optional)
+        if: ${{ inputs.build_amd64 }}
+        run: |
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -trimpath -o dist/go2rtc_linux_amd64 .
+          chmod +x dist/go2rtc_linux_amd64
 
       - name: Generate SHA256 checksums and build metadata
         run: |
-          (cd dist && sha256sum go2rtc_linux_amd64 go2rtc_linux_arm64 > SHA256SUMS.txt)
+          (cd dist && sha256sum go2rtc_linux_* > SHA256SUMS.txt)
+          targets="linux/arm64"
+          if [ "${{ inputs.build_amd64 }}" = "true" ]; then
+            targets="linux/arm64,linux/amd64"
+          fi
           {
             echo "commit=$(git rev-parse HEAD)"
             echo "ref=${GITHUB_REF_NAME:-local}"
+            echo "targets=${targets}"
             echo "go_version=$(go version)"
-            echo "app_version=$(./dist/go2rtc_linux_amd64 -version)"
+            echo "app_version=$(go run . -v)"
             echo "test_gate=PASSED"
           } > dist/build-info.txt
           cat dist/build-info.txt
