@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
+	"github.com/AlexxIT/go2rtc/pkg/hanetfix"
 )
 
 func (c *Conn) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
@@ -123,6 +124,10 @@ func (c *Conn) MarshalJSON() ([]byte, error) {
 
 func (c *Conn) Reconnect() error {
 	c.Fire("RTSP reconnect")
+	if c.hanet != nil {
+		c.hanet.stats.Reconnects.Add(1)
+		c.fireHanet("debug", "reconnect", "HANET RTSP reconnect: "+hanetfix.RedactURL(c.uri))
+	}
 
 	// close current session
 	_ = c.Close()

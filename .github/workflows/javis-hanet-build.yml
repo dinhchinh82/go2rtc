@@ -1,0 +1,110 @@
+name: JAVIS HANET Build and Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'dev'
+      - 'feature/javis-hanet-rtsp-fix'
+      - 'master'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test HANET Compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout patched repository
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install FFmpeg for strict decoder tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l pkg/hanetfix pkg/rtsp internal/rtsp main.go)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./pkg/hanetfix/... ./pkg/rtsp/... ./internal/rtsp/...
+
+      - name: Run race tests for hanetfix and rtsp client
+        run: |
+          set -o pipefail
+          go test -v -race ./pkg/hanetfix/... ./pkg/rtsp/... -timeout 180s | tee hanet-race-results.txt
+
+      - name: Run E2E RTSP/MP4/WebRTC pipeline tests
+        run: |
+          set -o pipefail
+          go test -v ./internal/rtsp/... -timeout 180s | tee hanet-e2e-results.txt
+
+      - name: Run full repository unit tests
+        run: |
+          set -o pipefail
+          go test ./... -timeout 120s | tee repo-test-results.txt
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        with:
+          name: javis-hanet-test-results
+          path: |
+            hanet-race-results.txt
+            hanet-e2e-results.txt
+            repo-test-results.txt
+
+  build:
+    name: Build Linux AMD64 and ARM64
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: 0
+    steps:
+      - name: Checkout patched repository
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build Linux AMD64 and ARM64 binaries
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -trimpath -o dist/go2rtc_linux_amd64 .
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -trimpath -o dist/go2rtc_linux_arm64 .
+          chmod +x dist/go2rtc_linux_amd64 dist/go2rtc_linux_arm64
+
+      - name: Generate SHA256 checksums and build metadata
+        run: |
+          (cd dist && sha256sum go2rtc_linux_amd64 go2rtc_linux_arm64 > SHA256SUMS.txt)
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "ref=${GITHUB_REF_NAME:-local}"
+            echo "go_version=$(go version)"
+            echo "app_version=$(./dist/go2rtc_linux_amd64 -version)"
+            echo "test_gate=PASSED"
+          } > dist/build-info.txt
+          cat dist/build-info.txt
+          cat dist/SHA256SUMS.txt
+
+      - name: Upload JAVIS HANET binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: go2rtc-javis-hanet-linux
+          path: dist/

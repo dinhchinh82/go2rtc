@@ -24,15 +24,17 @@ type Conn struct {
 
 	// public
 
-	Backchannel bool
-	Keepalive   int    // keepalive interval in seconds, 0 - auto, -1 - disabled
-	Keyframe    string // how video tracks request keyframes
-	Media       string
-	OnClose     func() error
-	PacketSize  uint16
-	SessionName string
-	Timeout     int
-	Transport   string // custom transport support, ex. RTSP over WebSocket
+	Backchannel       bool
+	HanetFix          bool
+	HanetProbeTimeout time.Duration
+	Keepalive         int    // keepalive interval in seconds, 0 - auto, -1 - disabled
+	Keyframe          string // how video tracks request keyframes
+	Media             string
+	OnClose           func() error
+	PacketSize        uint16
+	SessionName       string
+	Timeout           int
+	Transport         string // custom transport support, ex. RTSP over WebSocket
 
 	URL *url.URL
 
@@ -61,6 +63,8 @@ type Conn struct {
 	keyframeChan atomic.Uint32
 	keyframeSSRC atomic.Uint32
 	firSeq       atomic.Uint32
+
+	hanet *hanetState
 }
 
 const (
@@ -326,6 +330,15 @@ func (c *Conn) handleRawPacket(channel byte, buf []byte) error {
 
 		for _, receiver := range c.Receivers {
 			if receiver.ID == channel {
+				if c.hanet != nil {
+					handled, err := c.hanetHandleVideoPacket(receiver, packet)
+					if err != nil {
+						return err
+					}
+					if handled {
+						break
+					}
+				}
 				receiver.WriteRTP(packet)
 				break
 			}

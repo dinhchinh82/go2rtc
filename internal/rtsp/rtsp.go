@@ -101,13 +101,38 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 	if rawQuery != "" {
 		query := streams.ParseQuery(rawQuery)
 		conn.Backchannel = query.Get("backchannel") != "0"
+		conn.HanetFix = query.Get("hanet") == "1"
 		conn.Keepalive = core.Atoi(query.Get("keepalive"))
 		conn.Keyframe = query.Get("keyframe")
 		conn.Media = query.Get("media")
 		conn.Timeout = core.Atoi(query.Get("timeout"))
 		conn.Transport = query.Get("transport")
+		if conn.HanetFix {
+			conn.Backchannel = false
+			if !strings.HasPrefix(strings.ToLower(rawURL), "rtsp://") {
+				return nil, errors.New("hanetfix: only plain rtsp:// TCP transport is supported")
+			}
+			if conn.Transport != "" && conn.Transport != "tcp" {
+				return nil, errors.New("hanetfix: only RTSP TCP interleaved transport is supported")
+			}
+		}
 	} else {
 		conn.Backchannel = true
+	}
+
+	if conn.HanetFix {
+		conn.Listen(func(msg any) {
+			if ev, ok := msg.(rtsp.HanetEvent); ok {
+				switch ev.Level {
+				case "warn":
+					log.Warn().Str("event", ev.Event).Str("target", ev.Target).Msg(ev.Detail)
+				case "info":
+					log.Info().Str("event", ev.Event).Str("target", ev.Target).Msg(ev.Detail)
+				default:
+					log.Debug().Str("event", ev.Event).Str("target", ev.Target).Msg(ev.Detail)
+				}
+			}
+		})
 	}
 
 	if log.Trace().Enabled() {
