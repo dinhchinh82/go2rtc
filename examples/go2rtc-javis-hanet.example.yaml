@@ -1,0 +1,21 @@
+# Isolated parallel test configuration for JAVIS Home Controller (HC).
+# Runs alongside existing production go2rtc (1984/8554/8555) without replacing it.
+# Replace RFC 5737 documentation IPs (192.0.2.x) and CHANGE_ME locally only.
+
+api:
+  listen: "127.0.0.1:1985"
+
+rtsp:
+  listen: "127.0.0.1:8557"
+
+webrtc:
+  listen: ":8558"
+
+streams:
+  # Normal control camera (no #hanet=1 required)
+  hanet_good: "rtsp://192.0.2.104:554/user:hanet;pwd:CHANGE_ME"
+
+  # Broken HANET cameras (H.264 stream advertised as H.265/90000 without fmtp)
+  hanet_fix_1: "rtsp://192.0.2.105:554/user:hanet;pwd:CHANGE_ME#hanet=1"
+  hanet_fix_2: "rtsp://192.0.2.102:554/user:hanet;pwd:CHANGE_ME#hanet=1"
+  hanet_fix_3: "rtsp://192.0.2.108:554/user:hanet;pwd:CHANGE_ME#hanet=1"

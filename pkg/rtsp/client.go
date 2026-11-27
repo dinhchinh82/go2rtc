@@ -36,6 +36,11 @@ func (c *Conn) Dial() (err error) {
 	if c.URL, err = url.Parse(c.uri); err != nil {
 		return
 	}
+	if c.HanetFix {
+		if err = c.hanetValidateConfig(); err != nil {
+			return err
+		}
+	}
 
 	var conn net.Conn
 
@@ -196,6 +201,14 @@ func (c *Conn) Describe() error {
 		}
 	}
 
+	if c.HanetFix {
+		res.Body, err = c.hanetProcessDescribe(res.Body)
+		if err != nil {
+			_ = c.Close()
+			return err
+		}
+	}
+
 	c.SDP = string(res.Body) // for info
 
 	medias, err := UnmarshalSDP(res.Body)
@@ -211,6 +224,12 @@ func (c *Conn) Describe() error {
 			}
 		}
 		medias = clone
+	}
+
+	if c.HanetFix && c.Medias != nil {
+		if err = c.hanetCheckReconnectCodec(medias); err != nil {
+			return err
+		}
 	}
 
 	// TODO: rewrite more smart
@@ -400,6 +419,12 @@ func (c *Conn) Teardown() (err error) {
 }
 
 func (c *Conn) Close() error {
+	if c.conn == nil {
+		for _, conn := range c.udpConn {
+			_ = conn.Close()
+		}
+		return nil
+	}
 	if c.mode == core.ModeActiveProducer {
 		_ = c.Teardown()
 	}
