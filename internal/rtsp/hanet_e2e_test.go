@@ -448,6 +448,13 @@ func runStrictFFmpegRTSP(t *testing.T, rtspURL string, frames int) {
 	require.GreaterOrEqual(t, decoded, frames)
 }
 
+func waitNoActiveConns(t *testing.T, cam *e2eMockCamera) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return cam.activeConns.Load() == 0
+	}, 5*time.Second, 20*time.Millisecond, "mock camera still has active connections")
+}
+
 func TestHanetE2EStreamPipeline(t *testing.T) {
 	fix := getE2EFixtures(t)
 	cam := startE2EMockCamera(t, fix)
@@ -469,43 +476,66 @@ func TestHanetE2EStreamPipeline(t *testing.T) {
 		).Output()
 		require.NoError(t, err)
 
+		type ffprobeStream struct {
+			CodecName  string `json:"codec_name"`
+			Profile    string `json:"profile"`
+			Width      int    `json:"width"`
+			Height     int    `json:"height"`
+			SampleRate string `json:"sample_rate"`
+			Channels   int    `json:"channels"`
+		}
 		var probe struct {
-			Streams []struct {
-				CodecName  string `json:"codec_name"`
-				Profile    string `json:"profile"`
-				Width      int    `json:"width"`
-				Height     int    `json:"height"`
-				SampleRate string `json:"sample_rate"`
-				Channels   int    `json:"channels"`
-			} `json:"streams"`
+			Streams []ffprobeStream `json:"streams"`
 		}
 		require.NoError(t, json.Unmarshal(out, &probe))
 		require.Len(t, probe.Streams, 2)
-		require.Equal(t, "h264", probe.Streams[0].CodecName)
-		require.Equal(t, 320, probe.Streams[0].Width)
-		require.Equal(t, 240, probe.Streams[0].Height)
-		require.Equal(t, "aac", probe.Streams[1].CodecName)
-		require.Equal(t, "48000", probe.Streams[1].SampleRate)
-		require.Equal(t, 1, probe.Streams[1].Channels)
+
+		var h264Stream, aacStream *ffprobeStream
+		for i := range probe.Streams {
+			switch probe.Streams[i].CodecName {
+			case "h264":
+				h264Stream = &probe.Streams[i]
+			case "aac":
+				aacStream = &probe.Streams[i]
+			}
+		}
+		require.NotNil(t, h264Stream, "expected h264 video stream in ffprobe output: %s", string(out))
+		require.NotNil(t, aacStream, "expected aac audio stream in ffprobe output: %s", string(out))
+		require.Equal(t, 320, h264Stream.Width)
+		require.Equal(t, 240, h264Stream.Height)
+		require.Equal(t, "48000", aacStream.SampleRate)
+		require.Equal(t, 1, aacStream.Channels)
 
 		runStrictFFmpegRTSP(t, rtspOutURL, 100)
 	})
 
 	t.Run("concurrent_clients_share_single_upstream", func(t *testing.T) {
-		cam.maxActive.Store(0)
+		waitNoActiveConns(t, cam)
 		var wg sync.WaitGroup
-		for i := 0; i < 2; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				runStrictFFmpegRTSP(t, rtspOutURL, 100)
-			}()
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runStrictFFmpegRTSP(t, rtspOutURL, 160)
+		}()
+
+		require.Eventually(t, func() bool {
+			return cam.activeConns.Load() == 1
+		}, 10*time.Second, 20*time.Millisecond, "first client did not establish active upstream")
+		// Give the active session a moment so probe teardown cannot overlap.
+		time.Sleep(150 * time.Millisecond)
+		connsWhileStreaming := cam.totalConns.Load()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runStrictFFmpegRTSP(t, rtspOutURL, 100)
+		}()
 		wg.Wait()
-		require.LessOrEqual(t, cam.maxActive.Load(), int32(1), "multiple consumers must share one upstream")
+		require.Equal(t, connsWhileStreaming, cam.totalConns.Load(), "second client must reuse existing upstream without dialing")
 	})
 
 	t.Run("mp4_mse_consumer_strict_decode", func(t *testing.T) {
+		waitNoActiveConns(t, cam)
 		cons := mp4.NewConsumer(nil)
 		require.NoError(t, stream.AddConsumer(cons))
 
@@ -520,13 +550,11 @@ func TestHanetE2EStreamPipeline(t *testing.T) {
 			close(writeDone)
 		}()
 
-		// Collect enough fMP4 data for >=100 frames
+		// Collect enough fMP4 moof fragments for >=100 video frames + audio regardless of runner speed.
 		require.Eventually(t, func() bool {
-			info, err := os.Stat(tmpFile)
-			return err == nil && info.Size() > 60*1024
-		}, 12*time.Second, 50*time.Millisecond)
-		// Let a few more frames flush
-		time.Sleep(1200 * time.Millisecond)
+			raw, readErr := os.ReadFile(tmpFile)
+			return readErr == nil && bytes.Count(raw, []byte("moof")) >= 420
+		}, 15*time.Second, 100*time.Millisecond)
 
 		stream.RemoveConsumer(cons)
 		select {
@@ -567,6 +595,7 @@ func TestHanetE2EStreamPipeline(t *testing.T) {
 	})
 
 	t.Run("webrtc_h264_repack_pipeline", func(t *testing.T) {
+		waitNoActiveConns(t, cam)
 		cons := &mockWebRTCH264Consumer{
 			medias: []*core.Media{{
 				Kind: core.KindVideo, Direction: core.DirectionSendonly,
@@ -584,6 +613,7 @@ func TestHanetE2EStreamPipeline(t *testing.T) {
 	})
 
 	t.Run("upstream_disconnect_and_reconnect", func(t *testing.T) {
+		waitNoActiveConns(t, cam)
 		before := cam.totalConns.Load()
 		cons := &mockWebRTCH264Consumer{
 			medias: []*core.Media{{

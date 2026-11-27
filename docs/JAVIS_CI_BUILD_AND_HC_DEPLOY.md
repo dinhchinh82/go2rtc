@@ -31,6 +31,12 @@ Repository sử dụng workflow riêng [javis-hanet-build.yml](file:///Volumes/P
 
 ## 2. Cách kích hoạt Build trên GitHub Actions
 
+> [!NOTE]
+> **Vì sao đôi khi không thấy nút `Run workflow` trên GitHub?**
+> GitHub Actions chỉ hiển thị nút **Run workflow** (`workflow_dispatch`) khi file `.github/workflows/javis-hanet-build.yml` đã có mặt trên **nhánh mặc định (default branch, hiện là `master`)**. Nếu workflow mới chỉ nằm trên nhánh `dev`:
+> 1. Để chạy lại trực tiếp trên nhánh `dev`: mở lần chạy hiện có trong tab **Actions** -> nhấn **Re-run all jobs** (hoặc **Re-run failed jobs**), hoặc push commit mới lên `dev`.
+> 2. Để hiện nút **Run workflow** trên giao diện Web: merge/cherry-pick `.github/workflows/javis-hanet-build.yml` vào `master` (hoặc tạm đổi default branch của repo sang `dev` trong **Settings -> Branches**).
+
 ### Cách A: Tự động khi push / PR
 Workflow tự động chạy khi:
 - `push` lên nhánh `dev`, `feature/javis-hanet-rtsp-fix` hoặc `master`.

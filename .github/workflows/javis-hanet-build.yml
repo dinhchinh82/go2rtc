@@ -58,6 +58,7 @@ jobs:
           go test ./... -timeout 120s | tee repo-test-results.txt
 
       - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: javis-hanet-test-results
